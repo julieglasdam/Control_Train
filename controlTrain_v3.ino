@@ -1,8 +1,14 @@
+/*
+Send 0 = 116 ms
+Send 1 = 58 ms
+*/
 struct Packet 
 {
   byte preambleSize;
   byte address;
+  byte address2;
   byte order;
+  byte order2;
   byte checksum;
   int type;
 }  trainPacket, accPacket;
@@ -26,11 +32,12 @@ byte locoAddress        = 0xFF;
 byte locoDirection      = 0xFF;
 byte locoSpeed          = 0xFF;
 byte bitMask            = 0x80; 
+unsigned int accessoryNumber = 0xFFFF;
 
 int OUTPIN = 3;
-unsigned int accessoryNumber = 0xFFFF;
-int readyToSend = 0; // 0 = not ready, 1 = send train packet, 2 = send acc packet
+int readyToSend = 0;      // 0 = not ready, 1 = send train packet, 2 = send acc packet
 int count = 0;
+int bitSend = 2;          // 0 = send 0, 1 = send 1, 2 = don't send
 
 
 void setup() {
@@ -41,13 +48,17 @@ void setup() {
   // Set the trainPacket to default values
   trainPacket.preambleSize         = 12;
   trainPacket.address              = 0xFF;
+  trainPacket.address2             = 0;
   trainPacket.order                = 0x00;
+  trainPacket.order2               = 0;
   trainPacket.checksum             = 0x00;
   trainPacket.type                 = 0;
 
   accPacket.preambleSize           = 12;
   accPacket.address                = 0xFF;
+  accPacket.address2               = 0x00;
   accPacket.order                  = 0x00;
+  accPacket.order2                 = 0x00;
   accPacket.checksum               = 0x00;
   accPacket.type                   = 1;
   
@@ -81,10 +92,14 @@ void loop() {
   }
   // ======= Accessory =======
   else {
+      // Get the accessory number (address), to dreate a packet to send
       accessoryNumber = getUserInput(2047, "Select Accessory Number (0-2047).");
+      // ________________Get the order
       
-      setAccPacket(accessoryNumber);
+      // Set packet with the user input
+      setAccPacket(accessoryNumber, 0);
 
+      // Send the packets
       readyToSend = 2;
       
   }  
@@ -120,17 +135,93 @@ void setTrainPacket(byte address, byte locoDirection, byte locoSpeed){
 }
 
 
-
-void setAccPacket(unsigned int accessoryNumber) {
-  unsigned int fullAddress    = 0;         
-  byte order                  = 0x80;                    
+// Params: accessoryNumber: eg. 102, light: red or green
+void setAccPacket(unsigned int accessoryNumber, int light) {
+  unsigned int fullAddress    = 0;
+  unsigned x, y               = 0;         
+  byte order                  = 0x80;
+  byte order2                 = 0x80;
+  byte pRegister              = 0x80;     
   byte address                = 0x80;                 
-  byte output                 = 0;                      
+  byte output                 = 0;  
 
-  fullAddress = (accessoryNumber / 4 + 1);
+  fullAddress = (accessoryNumber/4)+1;
+  pRegister = (fullAddress%4)-1;
+  order = fullAddress & 63;
+  order = order + 128;
+  order2 = 128;
+
+  x = 0;
+  y = fullAddress & 64;
+
+  if (y == 0) {
+     x += 64;
+  }
+  y = fullAddress & 128; 
+
+  if (y == 0) {
+    x += 128; 
+  }
+  y = address & 256; 
+  
+  if (y == 0){
+    x += 256; 
+  } 
+  x = x >> 2; 
+
+  order2 += x; 
+  order2 = order2 + (pRegister << 1); 
+
+  if(light == 1) { 
+    order2 += 8; 
+    pAccPacket->address = order; 
+    pAccPacket->order = order2; 
+    pAccPacket->address2 = order; 
+    pAccPacket->order2 = order2 - 8; 
+  } 
+
+  
+  else { 
+    order2 += 9; 
+    pAccPacket->address = order; 
+    pAccPacket->order = order2; 
+    pAccPacket->address2 = order; 
+    pAccPacket->order2 = order2 - 8; 
+  } 
+
+/*
+
+
+
+
+
+if(b==1) 
+{ 
+byte2 += 8; 
+addr = byte1; 
+data = byte2; 
+addr2 = byte1; 
+data2 = byte2 - 8; 
+} 
+else 
+{ 
+byte2 += 9; 
+addr = byte1; 
+data = byte2; 
+addr2 = byte1; 
+data2 = byte2 - 8; 
+} 
+*/  
+
+  
+
+  
+  
+
+ /* fullAddress = (accessoryNumber / 4 + 1);
   address |= (0x3F & fullAddress);
   
-/*  order |= ((0x1C0 & (0x1C0 ^ fullAddress)) >> 2);
+  order |= ((0x1C0 & (0x1C0 ^ fullAddress)) >> 2);
 
   order |= (direction ? 1 : 0);
   order |= (state ? 0x8 : 0);
@@ -168,10 +259,6 @@ void printBinary(unsigned int b, byte width) {
 }
 
 
-void sendBit(int number) {
-  
-}
-
 /* NOTER: __________________
  *  // digitalWrite(OUTPIN, HIGH);
   // digitalWrite(OUTPIN, LOW);
@@ -191,8 +278,10 @@ ISR(TIMER2_COMPA_vect) {
        case PREAMBLE: 
          for (int i = 0; i < 12; i++) {
             Serial.print("1");               // Send 1
+      //     bitSend = 1;
          }
          Serial.print(" 0 ");                // Send 0
+       //  bitSend = 0;
          state = ADDRESS; 
        break;
 
@@ -202,12 +291,15 @@ ISR(TIMER2_COMPA_vect) {
          for (bitMask; bitMask !=0; bitMask >>= 1) {
            if (pTrainPacket->address & bitMask) {
               Serial.print("1");              // Send 1
+         //    bitSend = 1;
            }
            else {
               Serial.print("0");              // Send 0
+         //   bitSend = 0;
            }
          }
          Serial.print(" 0 ");                 // Send 0
+      //   bitSend = 0;
          bitMask = 0x80;
          state = ORDER;    
        break;
@@ -218,12 +310,15 @@ ISR(TIMER2_COMPA_vect) {
         for (bitMask; bitMask !=0; bitMask >>= 1) {
            if (pTrainPacket->order & bitMask) {
               Serial.print("1");              // Send 1
+         //  bitSend = 1;
            }
            else {
               Serial.print("0");              // Send 0
+           //   bitSend = 0;
            }
          }
          Serial.print(" 0 ");                 // Send 0
+      //   bitSend = 0;
          bitMask = 0x80;
          state = CHECKSUM; 
        break;
@@ -294,6 +389,23 @@ ISR(TIMER2_COMPA_vect) {
        break; 
     }     
   }
+
+
+  // ====== Send pulses of differnt lengths ======
+  switch(bitSend) {
+     // Send pulse with 116 ms delay between high and low
+     case 0:
+     break;
+
+     // Send pulse with 58 ms delay between high and low
+     case 1:
+     break;
+
+     // Don't send anything
+     case 2:
+     break;
+  }
+  
 
   
 }
