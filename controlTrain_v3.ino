@@ -6,16 +6,15 @@ struct Packet
 {
   byte preambleSize;
   byte address;
-  byte address2;
   byte order;
-  byte order2;
   byte checksum;
   int type;
-}  trainPacket, accPacket;
+}  trainPacket, accPacket, acc2Packet;
 
 // Pointers to reference the instances of the packets
 Packet *pTrainPacket;  
-Packet *pAccPacket;  
+Packet *pAccPacket;
+Packet *pAcc2Packet;  
 
 // States for state machine
 enum states 
@@ -23,7 +22,11 @@ enum states
   PREAMBLE,
   ADDRESS,
   ORDER,
-  CHECKSUM
+  CHECKSUM,
+  PREAMBLE_2,
+  ADDRESS_2,
+  ORDER_2,
+  CHECKSUM_2
 } state;
 
 
@@ -33,11 +36,15 @@ byte locoDirection      = 0xFF;
 byte locoSpeed          = 0xFF;
 byte bitMask            = 0x80; 
 unsigned int accessoryNumber = 0xFFFF;
+int light = 0;
+
 
 int OUTPIN = 3;
 int readyToSend = 0;      // 0 = not ready, 1 = send train packet, 2 = send acc packet
 int count = 0;
 int bitSend = 2;          // 0 = send 0, 1 = send 1, 2 = don't send
+
+int sendToAccCounter = 0;
 
 
 void setup() {
@@ -48,24 +55,27 @@ void setup() {
   // Set the trainPacket to default values
   trainPacket.preambleSize         = 12;
   trainPacket.address              = 0xFF;
-  trainPacket.address2             = 0;
   trainPacket.order                = 0x00;
-  trainPacket.order2               = 0;
   trainPacket.checksum             = 0x00;
   trainPacket.type                 = 0;
 
   accPacket.preambleSize           = 12;
   accPacket.address                = 0xFF;
-  accPacket.address2               = 0x00;
   accPacket.order                  = 0x00;
-  accPacket.order2                 = 0x00;
   accPacket.checksum               = 0x00;
   accPacket.type                   = 1;
+
+  acc2Packet.preambleSize           = 12;
+  acc2Packet.address                = 0xFF;
+  acc2Packet.order                  = 0x00;
+  acc2Packet.checksum               = 0x00;
+  acc2Packet.type                   = 1;
   
 
   // Set pointers for packets
   pTrainPacket = &trainPacket;
   pAccPacket = &accPacket;
+  pAcc2Packet = &acc2Packet;
 
   // Initialize state to wait for user input
   state = PREAMBLE; 
@@ -86,25 +96,247 @@ void loop() {
       // Set packet with the user input
       setTrainPacket(locoAddress, locoDirection, locoSpeed);
      
-      // Send the packets
+      // Send the train packets
       readyToSend = 1;
       
   }
+  
   // ======= Accessory =======
   else {
-      // Get the accessory number (address), to dreate a packet to send
+      // Get the accessory number (address), and light color to dreate a packet to send
       accessoryNumber = getUserInput(2047, "Select Accessory Number (0-2047).");
-      // ________________Get the order
-      
+      light = getUserInput(1, "Select Green or Red light (0 = green, 1 = red???)");
+        
       // Set packet with the user input
-      setAccPacket(accessoryNumber, 0);
+      setAccPacket(accessoryNumber, light);
 
-      // Send the packets
-      readyToSend = 2;
-      
+      // Send the accessory packets
+      readyToSend = 2;     
   }  
+
+  // Iterate through switch cases, to send the correct bytes
+  iterateSwitchCase();
 }
 
+
+
+void iterateSwitchCase() {
+   
+  // ===== Send message to train =====
+  if (readyToSend == 1) {
+    switch(state) {
+       
+       case PREAMBLE: 
+         for (int i = 0; i < 12; i++) {
+            Serial.print("1");               // Send 1
+      //     bitSend = 1;
+         }
+         Serial.print(" 0 ");                // Send 0
+       //  bitSend = 0;
+         state = ADDRESS; 
+       
+
+
+
+       case ADDRESS:
+         for (bitMask; bitMask !=0; bitMask >>= 1) {
+           if (pTrainPacket->address & bitMask) {
+              Serial.print("1");              // Send 1
+         //    bitSend = 1;
+           }
+           else {
+              Serial.print("0");              // Send 0
+         //   bitSend = 0;
+           }
+         }
+         Serial.print(" 0 ");                 // Send 0
+      //   bitSend = 0;
+         bitMask = 0x80;
+         state = ORDER;    
+      
+
+
+
+       case ORDER:
+        for (bitMask; bitMask !=0; bitMask >>= 1) {
+           if (pTrainPacket->order & bitMask) {
+              Serial.print("1");              // Send 1
+         //  bitSend = 1;
+           }
+           else {
+              Serial.print("0");              // Send 0
+           //   bitSend = 0;
+           }
+         }
+         Serial.print(" 0 ");                 // Send 0
+      //   bitSend = 0;
+         bitMask = 0x80;
+         state = CHECKSUM; 
+     
+       case CHECKSUM:
+        for (bitMask; bitMask !=0; bitMask >>= 1) {
+           if (pTrainPacket->checksum & bitMask) {
+              Serial.print("1");              // Send 1
+           }
+           else {
+              Serial.print("0");              // Send 0
+           }
+         }
+         Serial.print(" 1 ");                 // Send 1
+         bitMask = 0x80; 
+         Serial.println();
+         Serial.println();
+         state = PREAMBLE;
+         // Reset so timer doesn't do anything, before user wants to send another message
+         readyToSend = 0; 
+       break; 
+    }     
+  }
+  
+  // ===== Send message to accessory =====
+  else if (readyToSend == 2) {
+    switch(state) {
+      
+       case PREAMBLE:
+         for (int i = 0; i < 12; i++) {
+            Serial.print("1");               // Send 1
+         }
+         Serial.print(" 0 ");                // Send 0
+         state = ADDRESS; 
+      
+
+
+       case ADDRESS:
+         for (bitMask; bitMask !=0; bitMask >>= 1) {
+           if (pAccPacket->address & bitMask) {
+              Serial.print("1");              // Send 1
+           }
+           else {
+              Serial.print("0");              // Send 0
+           }
+         }
+         Serial.print(" 0 ");                 // Send 0
+         bitMask = 0x80;
+       state = ORDER;  
+      
+
+       case ORDER:
+         for (bitMask; bitMask !=0; bitMask >>= 1) {
+           if (pAccPacket->order & bitMask) {
+              Serial.print("1");              // Send 1
+         //  bitSend = 1;
+           }
+           else {
+              Serial.print("0");              // Send 0
+           //   bitSend = 0;
+           }
+         }
+         Serial.print(" 0 ");                 // Send 0
+      //   bitSend = 0;
+         bitMask = 0x80;
+         state = CHECKSUM; 
+     
+
+
+       case CHECKSUM:
+       for (bitMask; bitMask !=0; bitMask >>= 1) {
+           if (pAccPacket->checksum & bitMask) {
+              Serial.print("1");              // Send 1
+           }
+           else {
+              Serial.print("0");              // Send 0
+           }
+         }
+         Serial.print(" 1 ");                 // Send 1
+         bitMask = 0x80; 
+         Serial.println();
+         Serial.println();
+         state = PREAMBLE_2;
+
+
+         case PREAMBLE_2:
+         for (int i = 0; i < 12; i++) {
+            Serial.print("1");               // Send 1
+         }
+         Serial.print(" 0 ");                // Send 0
+         state = ADDRESS_2; 
+    
+
+
+       case ADDRESS_2:
+         for (bitMask; bitMask !=0; bitMask >>= 1) {
+           if (pAcc2Packet->address & bitMask) {
+              Serial.print("1");              // Send 1
+           }
+           else {
+              Serial.print("0");              // Send 0
+           }
+         }
+         Serial.print(" 0 ");                 // Send 0
+         bitMask = 0x80;
+       state = ORDER_2;  
+      
+
+
+       case ORDER_2:
+         for (bitMask; bitMask !=0; bitMask >>= 1) {
+           if (pAcc2Packet->order & bitMask) {
+              Serial.print("1");              // Send 1
+         //  bitSend = 1;
+           }
+           else {
+              Serial.print("0");              // Send 0
+           //   bitSend = 0;
+           }
+         }
+         Serial.print(" 0 ");                 // Send 0
+      //   bitSend = 0;
+         bitMask = 0x80;
+         state = CHECKSUM_2;  
+     
+
+
+       case CHECKSUM_2:
+       for (bitMask; bitMask !=0; bitMask >>= 1) {
+           if (pAcc2Packet->checksum & bitMask) {
+              Serial.print("1");              // Send 1
+           }
+           else {
+              Serial.print("0");              // Send 0
+           }
+         }
+         Serial.print(" 1 ");                 // Send 1
+         bitMask = 0x80; 
+         Serial.println();
+         Serial.println();
+         state = PREAMBLE;
+     
+       readyToSend = 0;
+       
+       break; 
+     
+    }     
+  }
+
+
+
+  // ====== Send pulses of differnt lengths ======
+  /*switch(bitSend) {
+     // Send pulse with 116 ms delay between high and low
+     case 0:
+     break;
+
+     // Send pulse with 58 ms delay between high and low
+     case 1:
+     break;
+
+     // Don't send anything
+     case 2:
+     break; 
+     
+     }*/
+    
+}
 
 // Get input from the serial monitor. Just returns the decimal, not a byte  
 unsigned int getUserInput(unsigned int max, const char message[]) {
@@ -176,8 +408,12 @@ void setAccPacket(unsigned int accessoryNumber, int light) {
     order2 += 8; 
     pAccPacket->address = order; 
     pAccPacket->order = order2; 
-    pAccPacket->address2 = order; 
-    pAccPacket->order2 = order2 - 8; 
+    pAcc2Packet->address = order; 
+    pAcc2Packet->order = order2 - 8;
+    Serial.println(pAccPacket->address);   
+    Serial.println(pAccPacket->order);
+    Serial.println(pAcc2Packet->order); 
+    
   } 
 
   
@@ -185,58 +421,17 @@ void setAccPacket(unsigned int accessoryNumber, int light) {
     order2 += 9; 
     pAccPacket->address = order; 
     pAccPacket->order = order2; 
-    pAccPacket->address2 = order; 
-    pAccPacket->order2 = order2 - 8; 
+    pAcc2Packet->address = order; 
+    pAcc2Packet->order = order2 - 8; 
+
+    Serial.println(pAccPacket->address);   
+    Serial.println(pAccPacket->order);
+    Serial.println(pAcc2Packet->order); 
   } 
 
-/*
 
-
-
-
-
-if(b==1) 
-{ 
-byte2 += 8; 
-addr = byte1; 
-data = byte2; 
-addr2 = byte1; 
-data2 = byte2 - 8; 
-} 
-else 
-{ 
-byte2 += 9; 
-addr = byte1; 
-data = byte2; 
-addr2 = byte1; 
-data2 = byte2 - 8; 
-} 
-*/  
-
-  
-
-  
-  
-
- /* fullAddress = (accessoryNumber / 4 + 1);
-  address |= (0x3F & fullAddress);
-  
-  order |= ((0x1C0 & (0x1C0 ^ fullAddress)) >> 2);
-
-  order |= (direction ? 1 : 0);
-  order |= (state ? 0x8 : 0);
-
-  output = (accessoryNumber % 4);
-  output = (output == 0) ? 3 : (output - 1);
-  order |= (output << 1);
-
-  */
-
-
-  // ===== Sæt dem her =======
-  pAccPacket->address = address;
-  pAccPacket->order = order; // Mangler
-  //pAccPacket->checksum = packetChecksum(pAccPacket);
+  pAccPacket->checksum = packetChecksum(pAccPacket);
+  pAcc2Packet->checksum = packetChecksum(pAcc2Packet);
 }
 
 // Create checksum from address and order
@@ -245,6 +440,7 @@ byte packetChecksum(struct Packet *pPacket) {
   return (pPacket->address ^ pPacket->order);
 }
 
+/*
 // Prints the converted int-to-binary, but doesn't return the binary
 void printBinary(unsigned int b, byte width) {
   unsigned int max = 2;
@@ -257,155 +453,30 @@ void printBinary(unsigned int b, byte width) {
   }
   Serial.print(b, BIN);
 }
-
+*/
 
 /* NOTER: __________________
- *  // digitalWrite(OUTPIN, HIGH);
+  // digitalWrite(OUTPIN, HIGH);
   // digitalWrite(OUTPIN, LOW);
-    
-  
-
 */
 
 
+/*
+register 102, 0:
+154 (10011010)
+251 (11111011)
+243 (11110011)
+
+register 102, 1:
+154 (10011010)
+250 (11111010)
+242 (11110010)
+
+*/
+
 // Timer runs every 58 microseconds 
 ISR(TIMER2_COMPA_vect) {
-  
-  // ===== Send message to train =====
-  if (readyToSend == 1) {
-    switch(state) {
-       
-       case PREAMBLE: 
-         for (int i = 0; i < 12; i++) {
-            Serial.print("1");               // Send 1
-      //     bitSend = 1;
-         }
-         Serial.print(" 0 ");                // Send 0
-       //  bitSend = 0;
-         state = ADDRESS; 
-       break;
-
-
-
-       case ADDRESS:
-         for (bitMask; bitMask !=0; bitMask >>= 1) {
-           if (pTrainPacket->address & bitMask) {
-              Serial.print("1");              // Send 1
-         //    bitSend = 1;
-           }
-           else {
-              Serial.print("0");              // Send 0
-         //   bitSend = 0;
-           }
-         }
-         Serial.print(" 0 ");                 // Send 0
-      //   bitSend = 0;
-         bitMask = 0x80;
-         state = ORDER;    
-       break;
-
-
-
-       case ORDER:
-        for (bitMask; bitMask !=0; bitMask >>= 1) {
-           if (pTrainPacket->order & bitMask) {
-              Serial.print("1");              // Send 1
-         //  bitSend = 1;
-           }
-           else {
-              Serial.print("0");              // Send 0
-           //   bitSend = 0;
-           }
-         }
-         Serial.print(" 0 ");                 // Send 0
-      //   bitSend = 0;
-         bitMask = 0x80;
-         state = CHECKSUM; 
-       break;
-
-
-
-       case CHECKSUM:
-        for (bitMask; bitMask !=0; bitMask >>= 1) {
-           if (pTrainPacket->checksum & bitMask) {
-              Serial.print("1");              // Send 1
-           }
-           else {
-              Serial.print("0");              // Send 0
-           }
-         }
-         Serial.print(" 1 ");                 // Send 1
-         bitMask = 0x80; 
-         Serial.println();
-         Serial.println();
-         state = PREAMBLE;
-         // Reset so timer doesn't do anything, before user wants to send another message
-         readyToSend = 0; 
-       break; 
-    }     
-  }
-  
-  // ===== Send message to accessory =====
-  else if (readyToSend == 2) {
-    switch(state) {
-      
-       case PREAMBLE:
-         for (int i = 0; i < 12; i++) {
-            Serial.print("1");               // Send 1
-         }
-         Serial.print(" 0 ");                // Send 0
-         state = ADDRESS; 
-       break;
-
-
-       case ADDRESS:
-         for (bitMask; bitMask !=0; bitMask >>= 1) {
-           if (pAccPacket->address & bitMask) {
-              Serial.print("1");              // Send 1
-           }
-           else {
-              Serial.print("0");              // Send 0
-           }
-         }
-         Serial.print(" 0 ");                 // Send 0
-         bitMask = 0x80;
-       state = ORDER;  
-       break;
-
-
-       case ORDER:
-       Serial.print("xxxxxxxx 0 "); 
-       state = CHECKSUM; 
-       break;
-
-
-       case CHECKSUM:
-       Serial.print("xxxxxxxx 1 "); 
-       Serial.println();
-       Serial.println();
-       state = PREAMBLE;
-       // Reset so timer doesn't do anything, before user wants to send another message
-       readyToSend = 0; 
-       break; 
-    }     
-  }
-
-
-  // ====== Send pulses of differnt lengths ======
-  switch(bitSend) {
-     // Send pulse with 116 ms delay between high and low
-     case 0:
-     break;
-
-     // Send pulse with 58 ms delay between high and low
-     case 1:
-     break;
-
-     // Don't send anything
-     case 2:
-     break;
-  }
-  
+ 
 
   
 }
